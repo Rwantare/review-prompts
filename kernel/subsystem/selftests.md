@@ -111,13 +111,22 @@ silently with no message.
 
 ## Reuse Existing Shared Test Libraries Instead of Reimplementing Them
 
-Rewriting namespace setup/teardown, busy-wait polling, or device-creation
-plumbing inside one test script instead of using the subsystem's existing
-shared library produces a second implementation with different corner-case
-behavior (e.g. inconsistent cleanup on a failed setup, or a namespace leak
-the shared version already guards against), and a bug fixed in the shared
-version won't propagate to the reimplementation.
+Rewriting namespace setup/teardown, busy-wait polling, sysfs/file I/O, or
+device-creation plumbing inside one test file instead of using the
+subsystem's existing test-util header produces a second implementation with
+different corner-case behavior (e.g. no error check on a short write, or a
+namespace leak the shared version already guards against), and a bug fixed
+in the shared version won't propagate to the reimplementation. Before
+writing a small I/O or setup helper, check whether the subsystem's own test
+utility header already has it.
 
+- mm tests: `tools/testing/selftests/mm/vm_util.h` already provides sysfs
+  I/O (`read_sysfs`, `write_sysfs`), general file I/O (`read_file`,
+  `write_file`, `read_num`, `write_num`), and result reporting
+  (`log_test_start`, `log_test_result`). A new mm test that hand-opens a
+  sysfs path with `open()`/`write()`/`close()` instead of calling
+  `write_sysfs()` is reimplementing something that already exists, usually
+  without the existing error handling.
 - Networking tests: `tools/testing/selftests/net/lib.sh` already provides
   namespace management (`setup_ns`, `cleanup_ns`, `cleanup_all_ns`),
   busy-wait polling (`busywait`, `busywait_for_counter`, `loopy_wait`),
@@ -130,13 +139,15 @@ version won't propagate to the reimplementation.
   `DENYLIST` mechanism for excluding tests on architectures that lack a
   feature, and `vmtest.sh` for running under a matched kernel — check there
   before adding an ad hoc per-architecture skip.
-- More generally: when a change duplicates a small helper (state tracking,
-  setup/teardown, assertion wrapper) that already exists elsewhere in the
-  same subsystem's test directory, prefer factoring it into the shared file
-  and having both call sites use it, over carrying two copies forward.
+- More generally: any subsystem's `tools/testing/selftests/<subsys>/` tree
+  tends to have its own `*_util.h`/`lib.sh`/`lib.mk`-style header collecting
+  helpers new tests are expected to use — don't assume none exists just
+  because a given helper isn't in `net/lib.sh` or `mm/vm_util.h`.
 
-**REPORT as bugs**: a net/ test script that implements its own namespace
-creation/cleanup or polling loop instead of sourcing `lib.sh`.
+**REPORT as bugs**: a test that hand-rolls sysfs/file I/O, namespace
+setup/teardown, or a polling loop instead of using the subsystem's existing
+test-util header (`vm_util.h` for mm, `lib.sh` for net, etc.) for something
+that header already provides.
 
 ## KVM Selftests: IRQ Chip Setup and `vm_create` vs `vm_create_with_one_vcpu`
 
