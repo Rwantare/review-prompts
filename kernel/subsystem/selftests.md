@@ -32,6 +32,112 @@ Common mistake: creating a new shared library or utility file (like
 forgetting to add it to `TEST_FILES`. The tests work in the source directory
 but fail after `make install`.
 
+## Result Reporting: Use the `kselftest.h` / `kselftest_harness.h` Wrappers
+
+Hand-rolled `printf()`-based pass/fail output cannot be reliably parsed as TAP
+by kselftest's own runners and by CI systems that grep for `ok`/`not ok`
+lines, so failures get silently miscounted or missed by automation even
+when a human reading the raw output would see them.
+
+- Use `ksft_print_header()` and `ksft_set_plan(n)` at the start of a test
+  binary, and `ksft_finished()` at the end to print the summary line — don't
+  hand-format the plan/summary output.
+- Report each test case via `ksft_test_result_pass()`, `ksft_test_result_fail()`,
+  `ksft_test_result_skip()`, `ksft_test_result_xfail()`, or
+  `ksft_test_result_xpass()` (all in `tools/testing/selftests/kselftest.h`),
+  or the `ksft_test_result(condition, fmt, ...)` macro for a plain boolean.
+  Use `ksft_test_result_error()` specifically for setup/environment failures
+  that are distinct from the behavior under test failing.
+- Exit via `ksft_exit_pass()`, `ksft_exit_fail()`, or `ksft_exit_skip(fmt, ...)`
+  rather than calling `exit()` directly — these also flush the TAP summary
+  first.
+- For anything beyond a flat `main()` with sequential checks, use
+  `TEST()`/`TEST_F()` plus `FIXTURE()`/`FIXTURE_SETUP()`/`FIXTURE_TEARDOWN()`
+  and the `ASSERT_*`/`EXPECT_*` operators (`tools/testing/selftests/kselftest_harness.h`)
+  instead of writing bespoke `if (...) { report failure }` blocks — the
+  operators print the actual vs. expected values on failure automatically.
+  `FIXTURE_VARIANT`/`FIXTURE_VARIANT_ADD` run the same test body across a
+  parameter matrix instead of copy-pasting the test function per variant.
+
+```c
+// WRONG: not TAP, and the runner/CI can't tell this apart from stray stdout
+if (ret != 0) {
+	printf("FAIL: frobnicate returned %d\n", ret);
+	return 1;
+}
+
+// CORRECT: parseable, counted, and consistent with every other test
+ksft_test_result(ret == 0, "frobnicate\n");
+```
+
+**REPORT as bugs**: a test binary that prints its own ad hoc pass/fail text
+instead of calling into `kselftest.h`/`kselftest_harness.h`, or that calls
+`exit()`/`return` directly from `main()` without going through
+`ksft_exit_*()`.
+
+## Skip vs. Fail for Unsupported or Unconfigured Features
+
+Treating a missing prerequisite (kernel config option, hardware feature,
+filesystem capability) as a hard failure turns an environment difference
+into a false regression signal, and — per documented kselftest policy —
+a test that fails outright when unconfigured is also expected to not break
+the top-level `make run_tests` run for everyone else.
+
+- If a syscall or ioctl fails with `EOPNOTSUPP`/`ENOSYS`/`ENODEV` because the
+  specific feature genuinely isn't present, that's a skip, not a failure:
+  call `ksft_test_result_skip()` / the harness `SKIP()` macro, or
+  `TEST_REQUIRE()` up front, with a message explaining *what* was missing.
+- Distinguish this from the feature being present but broken — that's a
+  real failure and must still be reported as one.
+- Always include a reason string in the skip message (e.g. "MADV_REMOVE not
+  supported by filesystem") — a bare skip with no explanation is nearly as
+  unhelpful to a future debugger as a silent pass.
+
+```c
+// WRONG: EOPNOTSUPP here means "prerequisite absent", not "test failed"
+ret = madvise(addr, len, MADV_REMOVE);
+ASSERT_EQ(ret, 0);
+
+// CORRECT: treat the missing capability as a skip, with a reason
+ret = madvise(addr, len, MADV_REMOVE);
+if (ret == -1 && errno == EOPNOTSUPP)
+	SKIP(return, "MADV_REMOVE not supported by filesystem");
+ASSERT_EQ(ret, 0);
+```
+
+**REPORT as bugs**: a test that asserts/fails on `EOPNOTSUPP`, `ENOSYS`, or
+similar "capability absent" errno values instead of skipping, or that skips
+silently with no message.
+
+## Reuse Existing Shared Test Libraries Instead of Reimplementing Them
+
+Rewriting namespace setup/teardown, busy-wait polling, or device-creation
+plumbing inside one test script instead of using the subsystem's existing
+shared library produces a second implementation with different corner-case
+behavior (e.g. inconsistent cleanup on a failed setup, or a namespace leak
+the shared version already guards against), and a bug fixed in the shared
+version won't propagate to the reimplementation.
+
+- Networking tests: `tools/testing/selftests/net/lib.sh` already provides
+  namespace management (`setup_ns`, `cleanup_ns`, `cleanup_all_ns`),
+  busy-wait polling (`busywait`, `busywait_for_counter`, `loopy_wait`),
+  structured result reporting (`log_test`, `log_test_result`,
+  `log_test_skip`, `handle_test_result_*`, `ksft_status_merge`), and
+  netdevsim helpers (`create_netdevsim`, `cleanup_netdevsim`). A new net/
+  shell test that hand-rolls any of these is very likely duplicating
+  something already hardened against the common failure modes.
+- BPF tests: `tools/testing/selftests/bpf/README.rst` documents the
+  `DENYLIST` mechanism for excluding tests on architectures that lack a
+  feature, and `vmtest.sh` for running under a matched kernel — check there
+  before adding an ad hoc per-architecture skip.
+- More generally: when a change duplicates a small helper (state tracking,
+  setup/teardown, assertion wrapper) that already exists elsewhere in the
+  same subsystem's test directory, prefer factoring it into the shared file
+  and having both call sites use it, over carrying two copies forward.
+
+**REPORT as bugs**: a net/ test script that implements its own namespace
+creation/cleanup or polling loop instead of sourcing `lib.sh`.
+
 ## KVM Selftests: IRQ Chip Setup and `vm_create` vs `vm_create_with_one_vcpu`
 
 Tests that use `KVM_IRQFD`, `KVM_IRQ_LINE`, or IRQ routing APIs after
@@ -86,3 +192,13 @@ kvm_irqfd(vm, gsi, eventfd, 0);
 - **KVM IRQ chip tests**: When tests use `KVM_IRQFD`, `KVM_IRQ_LINE`, or IRQ
   routing, verify `vm_create_with_one_vcpu()` is used and
   `TEST_REQUIRE(kvm_arch_has_default_irqchip())` is present
+- **Hardcoded constants**: flag hardcoded filenames, IPs, or magic numbers
+  where a loop/glob/table would cover future additions for free (e.g. a
+  hardcoded `*.BTF` filename instead of a `*.BTF` glob in an install rule) —
+  ask whether the specific value has a documented rationale or is just the
+  first one the author tried
+- **`Fixes:` tag accuracy on bugfix patches**: for a patch fixing a bug in
+  existing test code, verify the `Fixes:` tag points at the commit that
+  actually introduced the bug, not just the commit that added the general
+  area of code — this is checked mechanically by CI bots on some lists
+  (e.g. bpf) and gets flagged when wrong
