@@ -149,6 +149,34 @@ setup/teardown, or a polling loop instead of using the subsystem's existing
 test-util header (`vm_util.h` for mm, `lib.sh` for net, etc.) for something
 that header already provides.
 
+## Test the Interface, Not the Implementation Detail; Extend Before Adding
+
+A test written against a specific implementation detail (an internal batching
+strategy, a particular code path taken to reach a result) breaks or needs a
+rewrite whenever that implementation changes, even when the behavior it's
+supposed to guard is still correct — and a new standalone test file for one
+narrow case usually duplicates setup/teardown an existing, more general test
+in the same directory already has.
+
+- Test the interface/contract (e.g. "GUP returns the right pages and content
+  for this mapping shape") rather than how the kernel currently gets there
+  internally (e.g. "GUP batches N contiguous PTEs in one internal loop
+  iteration"). A test at the interface level exercises whatever
+  implementation sits underneath, present or future, without being coupled
+  to it.
+- Before adding a new, narrow test file for one specific case, check whether
+  an existing test in the same directory already exercises the same
+  interface and could be extended with one more case/parameter instead. In
+  mm, for example, `gup_test.c` and `cow.c` already exercise
+  `get_user_pages()` content and COW correctness at other folio sizes; a new
+  size or mapping variant is naturally a new case in one of those, not a new
+  standalone binary.
+
+**REPORT as bugs**: a new selftest file added for a narrow variant (a
+specific size, a specific internal code path) of behavior an existing test
+in the same directory already covers more generally — ask whether it should
+be a new case in the existing test instead.
+
 ## KVM Selftests: IRQ Chip Setup and `vm_create` vs `vm_create_with_one_vcpu`
 
 Tests that use `KVM_IRQFD`, `KVM_IRQ_LINE`, or IRQ routing APIs after
