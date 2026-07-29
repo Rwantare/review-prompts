@@ -32,6 +32,151 @@ Common mistake: creating a new shared library or utility file (like
 forgetting to add it to `TEST_FILES`. The tests work in the source directory
 but fail after `make install`.
 
+## Result Reporting: Use the `kselftest.h` / `kselftest_harness.h` Wrappers
+
+Hand-rolled `printf()`-based pass/fail output cannot be reliably parsed as TAP
+by kselftest's own runners and by CI systems that grep for `ok`/`not ok`
+lines, so failures get silently miscounted or missed by automation even
+when a human reading the raw output would see them.
+
+- Use `ksft_print_header()` and `ksft_set_plan(n)` at the start of a test
+  binary, and `ksft_finished()` at the end to print the summary line — don't
+  hand-format the plan/summary output.
+- Report each test case via `ksft_test_result_pass()`, `ksft_test_result_fail()`,
+  `ksft_test_result_skip()`, `ksft_test_result_xfail()`, or
+  `ksft_test_result_xpass()` (all in `tools/testing/selftests/kselftest.h`),
+  or the `ksft_test_result(condition, fmt, ...)` macro for a plain boolean.
+  Use `ksft_test_result_error()` specifically for setup/environment failures
+  that are distinct from the behavior under test failing.
+- Exit via `ksft_exit_pass()`, `ksft_exit_fail()`, or `ksft_exit_skip(fmt, ...)`
+  rather than calling `exit()` directly — these also flush the TAP summary
+  first.
+- For anything beyond a flat `main()` with sequential checks, use
+  `TEST()`/`TEST_F()` plus `FIXTURE()`/`FIXTURE_SETUP()`/`FIXTURE_TEARDOWN()`
+  and the `ASSERT_*`/`EXPECT_*` operators (`tools/testing/selftests/kselftest_harness.h`)
+  instead of writing bespoke `if (...) { report failure }` blocks — the
+  operators print the actual vs. expected values on failure automatically.
+  `FIXTURE_VARIANT`/`FIXTURE_VARIANT_ADD` run the same test body across a
+  parameter matrix instead of copy-pasting the test function per variant.
+
+```c
+// WRONG: not TAP, and the runner/CI can't tell this apart from stray stdout
+if (ret != 0) {
+	printf("FAIL: frobnicate returned %d\n", ret);
+	return 1;
+}
+
+// CORRECT: parseable, counted, and consistent with every other test
+ksft_test_result(ret == 0, "frobnicate\n");
+```
+
+**REPORT as bugs**: a test binary that prints its own ad hoc pass/fail text
+instead of calling into `kselftest.h`/`kselftest_harness.h`, or that calls
+`exit()`/`return` directly from `main()` without going through
+`ksft_exit_*()`.
+
+## Skip vs. Fail for Unsupported or Unconfigured Features
+
+Treating a missing prerequisite (kernel config option, hardware feature,
+filesystem capability) as a hard failure turns an environment difference
+into a false regression signal, and — per documented kselftest policy —
+a test that fails outright when unconfigured is also expected to not break
+the top-level `make run_tests` run for everyone else.
+
+- If a syscall or ioctl fails with `EOPNOTSUPP`/`ENOSYS`/`ENODEV` because the
+  specific feature genuinely isn't present, that's a skip, not a failure:
+  call `ksft_test_result_skip()` / the harness `SKIP()` macro, or
+  `TEST_REQUIRE()` up front, with a message explaining *what* was missing.
+- Distinguish this from the feature being present but broken — that's a
+  real failure and must still be reported as one.
+- Always include a reason string in the skip message (e.g. "MADV_REMOVE not
+  supported by filesystem") — a bare skip with no explanation is nearly as
+  unhelpful to a future debugger as a silent pass.
+
+```c
+// WRONG: EOPNOTSUPP here means "prerequisite absent", not "test failed"
+ret = madvise(addr, len, MADV_REMOVE);
+ASSERT_EQ(ret, 0);
+
+// CORRECT: treat the missing capability as a skip, with a reason
+ret = madvise(addr, len, MADV_REMOVE);
+if (ret == -1 && errno == EOPNOTSUPP)
+	SKIP(return, "MADV_REMOVE not supported by filesystem");
+ASSERT_EQ(ret, 0);
+```
+
+**REPORT as bugs**: a test that asserts/fails on `EOPNOTSUPP`, `ENOSYS`, or
+similar "capability absent" errno values instead of skipping, or that skips
+silently with no message.
+
+## Reuse Existing Shared Test Libraries Instead of Reimplementing Them
+
+Rewriting namespace setup/teardown, busy-wait polling, sysfs/file I/O, or
+device-creation plumbing inside one test file instead of using the
+subsystem's existing test-util header produces a second implementation with
+different corner-case behavior (e.g. no error check on a short write, or a
+namespace leak the shared version already guards against), and a bug fixed
+in the shared version won't propagate to the reimplementation. Before
+writing a small I/O or setup helper, check whether the subsystem's own test
+utility header already has it.
+
+- mm tests: `tools/testing/selftests/mm/vm_util.h` already provides sysfs
+  I/O (`read_sysfs`, `write_sysfs`), general file I/O (`read_file`,
+  `write_file`, `read_num`, `write_num`), and result reporting
+  (`log_test_start`, `log_test_result`). A new mm test that hand-opens a
+  sysfs path with `open()`/`write()`/`close()` instead of calling
+  `write_sysfs()` is reimplementing something that already exists, usually
+  without the existing error handling.
+- Networking tests: `tools/testing/selftests/net/lib.sh` already provides
+  namespace management (`setup_ns`, `cleanup_ns`, `cleanup_all_ns`),
+  busy-wait polling (`busywait`, `busywait_for_counter`, `loopy_wait`),
+  structured result reporting (`log_test`, `log_test_result`,
+  `log_test_skip`, `handle_test_result_*`, `ksft_status_merge`), and
+  netdevsim helpers (`create_netdevsim`, `cleanup_netdevsim`). A new net/
+  shell test that hand-rolls any of these is very likely duplicating
+  something already hardened against the common failure modes.
+- BPF tests: `tools/testing/selftests/bpf/README.rst` documents the
+  `DENYLIST` mechanism for excluding tests on architectures that lack a
+  feature, and `vmtest.sh` for running under a matched kernel — check there
+  before adding an ad hoc per-architecture skip.
+- More generally: any subsystem's `tools/testing/selftests/<subsys>/` tree
+  tends to have its own `*_util.h`/`lib.sh`/`lib.mk`-style header collecting
+  helpers new tests are expected to use — don't assume none exists just
+  because a given helper isn't in `net/lib.sh` or `mm/vm_util.h`.
+
+**REPORT as bugs**: a test that hand-rolls sysfs/file I/O, namespace
+setup/teardown, or a polling loop instead of using the subsystem's existing
+test-util header (`vm_util.h` for mm, `lib.sh` for net, etc.) for something
+that header already provides.
+
+## Test the Interface, Not the Implementation Detail; Extend Before Adding
+
+A test written against a specific implementation detail (an internal batching
+strategy, a particular code path taken to reach a result) breaks or needs a
+rewrite whenever that implementation changes, even when the behavior it's
+supposed to guard is still correct — and a new standalone test file for one
+narrow case usually duplicates setup/teardown an existing, more general test
+in the same directory already has.
+
+- Test the interface/contract (e.g. "GUP returns the right pages and content
+  for this mapping shape") rather than how the kernel currently gets there
+  internally (e.g. "GUP batches N contiguous PTEs in one internal loop
+  iteration"). A test at the interface level exercises whatever
+  implementation sits underneath, present or future, without being coupled
+  to it.
+- Before adding a new, narrow test file for one specific case, check whether
+  an existing test in the same directory already exercises the same
+  interface and could be extended with one more case/parameter instead. In
+  mm, for example, `gup_test.c` and `cow.c` already exercise
+  `get_user_pages()` content and COW correctness at other folio sizes; a new
+  size or mapping variant is naturally a new case in one of those, not a new
+  standalone binary.
+
+**REPORT as bugs**: a new selftest file added for a narrow variant (a
+specific size, a specific internal code path) of behavior an existing test
+in the same directory already covers more generally — ask whether it should
+be a new case in the existing test instead.
+
 ## KVM Selftests: IRQ Chip Setup and `vm_create` vs `vm_create_with_one_vcpu`
 
 Tests that use `KVM_IRQFD`, `KVM_IRQ_LINE`, or IRQ routing APIs after
@@ -156,3 +301,13 @@ answer into a success code that the assertion then catches.
   different code. If the missing check and an unrelated missing precondition
   both yield the asserted code, the test passes whether or not the kernel is
   correct
+- **Hardcoded constants**: flag hardcoded filenames, IPs, or magic numbers
+  where a loop/glob/table would cover future additions for free (e.g. a
+  hardcoded `*.BTF` filename instead of a `*.BTF` glob in an install rule) —
+  ask whether the specific value has a documented rationale or is just the
+  first one the author tried
+- **`Fixes:` tag accuracy on bugfix patches**: for a patch fixing a bug in
+  existing test code, verify the `Fixes:` tag points at the commit that
+  actually introduced the bug, not just the commit that added the general
+  area of code — this is checked mechanically by CI bots on some lists
+  (e.g. bpf) and gets flagged when wrong
