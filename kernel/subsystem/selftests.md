@@ -85,8 +85,9 @@ the top-level `make run_tests` run for everyone else.
 
 - If a syscall or ioctl fails with `EOPNOTSUPP`/`ENOSYS`/`ENODEV` because the
   specific feature genuinely isn't present, that's a skip, not a failure:
-  call `ksft_test_result_skip()` / the harness `SKIP()` macro, or
-  `TEST_REQUIRE()` up front, with a message explaining *what* was missing.
+  call `ksft_test_result_skip()` or the harness `SKIP()` macro, with a message
+  explaining *what* was missing. KVM selftests can use `TEST_REQUIRE()` from
+  their subsystem-specific test utilities to perform this check up front.
 - Distinguish this from the feature being present but broken — that's a
   real failure and must still be reported as one.
 - Always include a reason string in the skip message (e.g. "MADV_REMOVE not
