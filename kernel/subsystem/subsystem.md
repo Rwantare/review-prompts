@@ -48,6 +48,7 @@ and symbols regexes.
 | btrfs | fs/btrfs/ | btrfs.md |
 | DAX | dax operations | dax.md |
 | Block/NVMe | block layer, nvme | block.md |
+| Boot Parameters | `__setup("`, `early_param("`, `module_param(`, `module_param_named(`, `core_param(`, `boot parameter`, `cmdline`, `command-line` | boot-params.md |
 | DRM/GPU | drivers/gpu/drm/, drm_atomic_, drm_crtc_, hwseq, hw_sequencer | drm.md |
 | NFSD | fs/nfsd/*, fs/lockd/* | nfsd.md |
 | SunRPC | net/sunrpc/* | sunrpc.md |
