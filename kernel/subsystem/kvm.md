@@ -91,6 +91,15 @@ translation usage.
 - **Update API:** All changes to memslots (flags, address ranges) MUST go
   through `kvm_set_memory_region()`. Manual modification of memslot structures
   is forbidden.
+- **Write-intent trap in hva/pfn helpers:** `gfn_to_hva()`,
+  `gfn_to_hva_many()` and `gfn_to_hva_memslot()` request *writable*
+  translations and return `KVM_HVA_ERR_RO_BAD` for valid `KVM_MEM_READONLY`
+  slots; `gfn_to_hva_memslot_prot()` and the read variants pass write=false
+  and do not. Any fault, prefetch, or emulation path performing a read access
+  must use a write=false variant, or valid read-only memslots (arm64 UEFI
+  flash, ROM regions) hard-fail with an error the run path would not produce.
+  Check every new hva/pfn resolution against the `KVM_MEM_READONLY` and
+  dirty-logging flag classes explicitly.
 
 **REPORT as bugs:**
 - Accessing memslots or calling address translation helpers (e.g.,
@@ -98,6 +107,8 @@ translation usage.
   `slots_lock`).
 - Manual bit-flipping in memslot flags (e.g., `KVM_MEM_LOG_DIRTY_PAGES`)
   outside the official update path.
+- Read-access paths resolving hva/pfn through a write-intent helper
+  (`gfn_to_hva_memslot()` et al.) where a `KVM_MEM_READONLY` slot is legal.
 
 ```c
 // WRONG: Accessing memslots without SRCU protection
