@@ -29,7 +29,8 @@ usage() {
     echo ""
     echo "Arguments:"
     echo "  <agent>     Install skill and commands for this code agent"
-    echo "              Available agents: claude, codex, opencode, gemini"
+    echo "              Available agents: claude, codex, opencode, gemini,"
+    echo "                                kiro-cli"
     echo "  <project>   Install skills and commands for this project"
     echo "              Available projects: iproute, kernel, systemd"
     echo ""
@@ -78,7 +79,7 @@ install_project() {
             if [ -f "$cmd_file" ]; then
                 local cmd_name=$(basename "$cmd_file")
                 sed "s|{{REVIEW_DIR}}|$project_dir|g" "$cmd_file" > "$COMMANDS_DIR/$cmd_name"
-                echo "  /${cmd_name%.md}"
+                echo "  ${COMMAND_PREFIX:-/}${cmd_name%.md}"
             fi
         done
     fi
