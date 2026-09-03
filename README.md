@@ -1,7 +1,7 @@
 # Review Prompts for AI-Assisted Code Review
 
 AI-assisted code review prompts for Linux kernel, systemd, iproute,
-nfs-utils, and pahole development. Works with Claude Code and other AI tools.
+nfs-utils, pahole, and QEMU development. Works with Claude Code and other AI tools.
 
 ## Quick Start
 
@@ -17,13 +17,14 @@ executed with `-h|--help` option.
 
 ## Available Commands
 
-| Project | Review | Debug | Verify |
-|---------|--------|-------|--------|
-| Kernel | `/kreview` | `/kdebug` | `/kverify` |
-| systemd | `/systemd-review` | `/systemd-debug` | `/systemd-verify` |
-| iproute | `/iproute-review` | `/iproute-debug` | `/iproute-verify` |
-| nfs-utils | `/nfs-utils-review` | `/nfs-utils-debug` | `/nfs-utils-verify` |
-| pahole | `/pahole-review` | `/pahole-debug` | `/pahole-verify` |
+| Project | Review | Debug | Verify | Series |
+|---------|--------|-------|--------|--------|
+| Kernel | `/kreview` | `/kdebug` | `/kverify` | `/kseries` |
+| systemd | `/systemd-review` | `/systemd-debug` | `/systemd-verify` | - |
+| iproute | `/iproute-review` | `/iproute-debug` | `/iproute-verify` | - |
+| nfs-utils | `/nfs-utils-review` | `/nfs-utils-debug` | `/nfs-utils-verify` | - |
+| pahole | `/pahole-review` | `/pahole-debug` | `/pahole-verify` | - |
+| QEMU | `/qemu-review` | `/qemu-debug` | `/qemu-verify` | `/qemu-series` |
 
 ## Project Documentation
 
@@ -32,6 +33,7 @@ executed with `-h|--help` option.
 * [iproute Review Prompts](iproute/README.md) - iproute specific patterns and protocols
 * [nfs-utils Review Prompts](nfs-utils/README.md) - nfs-utils specific patterns and protocols
 * [pahole Review Prompts](pahole/README.md) - pahole specific patterns and protocols
+* [QEMU Review Prompts](qemu/README.md) - QEMU specific patterns, QOM, VMState, and protocols
 
 ## How It Works
 
@@ -46,6 +48,7 @@ The skills detect your working directory and load appropriate context:
 - In an iproute tree: iproute skill loads automatically
 - In an nfs-utils tree: nfs-utils skill loads automatically
 - In a pahole tree: pahole skill loads automatically
+- In a QEMU tree: qemu skill loads automatically
 
 ## Structure
 
@@ -82,6 +85,12 @@ review-prompts/
 │   ├── skills/               # Skill template
 │   ├── slash-commands/       # /pahole-review, /pahole-debug, /pahole-verify
 │   └── *.md                  # Subsystem and protocol files
+│
+├── qemu/                     # QEMU prompts
+│   ├── skills/               # Skill template
+│   ├── slash-commands/       # /qemu-review, /qemu-debug, /qemu-verify, /qemu-series
+│   ├── subsystems/           # QOM, Memory, Block, Migration, Virtio, PCI, etc.
+│   └── *.md                  # Technical patterns and protocols
 │
 └── README.md                  # This file
 ```
