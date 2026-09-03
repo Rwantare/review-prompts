@@ -32,7 +32,7 @@ usage() {
     echo "              Available agents: claude, codex, opencode, gemini,"
     echo "                                goose, kiro-cli"
     echo "  <project>   Install skills and commands for this project"
-    echo "              Available projects: iproute, kernel, systemd"
+    echo "              Available projects: iproute, kernel, qemu, systemd"
     echo ""
     echo "Options:"
     echo "  -h, --help  Show this help message and exit"
